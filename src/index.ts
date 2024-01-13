@@ -16,29 +16,36 @@ import type {
   Entries,
   Entry,
   Error,
-  Fns,
   GetDataFn,
   Option,
   Result,
+  ResultFunctions,
   Rule,
   Rules,
   UnknownObject,
   UseValidate,
+  ValidationResult,
 } from './types';
 
-const useValidate = (
-  _data: UnwrapRef<Data> | Ref<Data> | ComputedRef<Data>,
-  _rules: UnwrapRef<Rules> | Ref<Rules> | ComputedRef<Rules>,
-  _option: UnwrapRef<Option> | Ref<Option> | ComputedRef<Option> = reactive({}),
-): UseValidate => {
-  const dirt = reactive<Dirt>({});
+const useValidate = <DT extends Data>(
+  _data: UnwrapRef<DT> | Ref<DT> | ComputedRef<DT>,
+  _rules: UnwrapRef<Rules<DT>> | Ref<Rules<DT>> | ComputedRef<Rules<DT>>,
+  _option:
+    | UnwrapRef<Option<DT>>
+    | Ref<Option<DT>>
+    | ComputedRef<Option<DT>> = reactive({}),
+): UseValidate<DT> => {
+  const dirt = reactive({} as Dirt<DT>);
   const rawData = reactive<UnknownObject>({});
-  const entries = reactive<Entries>({});
+  const entries = reactive({} as Entries<DT>);
 
-  const option = computed<Option>(() => ({ ...OPTION, ...unwrap(_option) }));
+  const option = computed<Option<DT>>(() => ({
+    ...OPTION,
+    ...unwrap(_option),
+  }));
 
-  const result = computed<Result | any>(() => {
-    const rawResult: Result = getResult(entries, dirt);
+  const result = computed<Result<DT> | any>(() => {
+    const rawResult: Result<DT> = getResult(unwrap(entries), unwrap(dirt));
     const { transform } = option.value;
 
     return transform
@@ -46,27 +53,47 @@ const useValidate = (
       : rawResult;
   });
 
-  const getResult = (entries: Entries, dirt: Dirt): Result => {
-    const result: Result = {
+  const getResult = (
+    entries: Entries<DT> | Entry,
+    dirt: Dirt<DT>,
+  ): Result<DT> => {
+    let result = {
       ...ENTRY_PARAM,
       $dirty: false,
       $test: NOOP,
       $reset: NOOP,
       $touch: NOOP,
+    } as Result<DT>;
+    const keys: Array<keyof Entries<DT>> = Object.keys(entries);
+
+    const fns: Record<keyof ResultFunctions, Function[]> = {
+      $test: [],
+      $reset: [],
+      $touch: [],
     };
-    const keys: Array<string> = Object.keys(entries);
+    const fnsKeys = Object.keys(fns) as Array<keyof ResultFunctions>;
 
-    const fns: Fns = { $test: [], $reset: [], $touch: [] };
-    const fnsKeys: Array<string> = Object.keys(fns);
-
-    const setOverallResult = (result: Result, childResult: Result): void => {
-      const fields: Array<string> = [...Object.keys(ENTRY_PARAM), '$dirty'];
+    const setOverallResult = <DT extends Data>(
+      result: Result<DT>,
+      childResult: Result<DT>,
+    ): void => {
+      const fields: Array<keyof ValidationResult> = [
+        '$dirty',
+        ...(Object.keys(ENTRY_PARAM) as Array<keyof ValidationResult>),
+      ];
 
       for (const field of fields) {
-        if (Array.isArray(result[field])) {
-          result[field] = [...result[field], ...childResult[field]];
-        } else {
-          if (!result[field] && childResult[field]) result[field] = true;
+        switch (field) {
+          case '$errors':
+            result[field] = [...result[field], ...childResult[field]];
+            break;
+          case '$messages':
+            result[field] = [...(result[field] || []), ...childResult[field]];
+            break;
+          default:
+            console.log('🥒', field, result[field], childResult[field]);
+            result[field] = !result[field] && childResult[field];
+            break;
         }
       }
 
@@ -76,23 +103,27 @@ const useValidate = (
     };
 
     for (const key of keys) {
-      if (isObject(entries[key]) && !hasOwn(entries[key], '$invalid')) {
-        const childResult = getResult(
-          entries[key] as Entries,
-          dirt[key] as Dirt,
-        );
-        result[key] = { ...childResult };
+      if (!('$invalid' in entries)) {
+        const childResult = getResult(entries[key], dirt[key] as Dirt<DT>);
+
+        result = { ...result, [key]: { ...childResult } };
         setOverallResult(result, childResult);
       } else {
-        result[key] = { ...entries[key], $dirty: dirt[key] };
-        setOverallResult(result, result[key]);
+        const finalResult = {
+          ...(entries as Entry),
+          $dirty: dirt[key] as boolean,
+        } as Result<DT>;
+        result = { ...result, [key]: finalResult[key] };
+        setOverallResult(result, finalResult);
       }
     }
 
     for (const key of fnsKeys) {
-      result[key] = () => {
+      result[key] = async () => {
         const executedFns = fns[key].map((fn: Function) => fn());
-        return key === '$test' ? Promise.all(executedFns) : executedFns;
+        if (key === '$test') {
+          await Promise.all(executedFns);
+        }
       };
     }
 
@@ -100,11 +131,11 @@ const useValidate = (
   };
 
   const setDefaultValue = (
-    data: GetDataFn,
-    rules: Rules,
-    dirt: Dirt,
+    data: GetDataFn<DT>,
+    rules: Rules<DT>,
+    dirt: Dirt<DT>,
     rawData: UnknownObject,
-    entries: Entries,
+    entries: Entries<DT>,
   ): void => {
     const keys: Array<string> = Object.keys(rules);
 
@@ -120,16 +151,22 @@ const useValidate = (
 
         setDefaultValue(
           () => data()[key],
-          rules[key] as Rules,
-          dirt[key] as Dirt,
+          rules[key] as Rules<DT>,
+          dirt[key] as Dirt<DT>,
           rawData[key],
-          entries[key] as Entries,
+          entries[key] as Entries<DT>,
         );
       } else {
         setReactiveValue(dirt, key, false);
         setReactiveValue(rawData, key, data()[key]);
 
-        const entryData: ArgsObject = { data, rules, dirt, rawData, entries };
+        const entryData: ArgsObject<DT> = {
+          data,
+          rules,
+          dirt,
+          rawData,
+          entries,
+        };
 
         setReactiveValue(entries, key, {
           ...ENTRY_PARAM,
@@ -151,7 +188,10 @@ const useValidate = (
     }
   };
 
-  const test = async (entryData: ArgsObject, key: string): Promise<void> => {
+  const test = async (
+    entryData: ArgsObject<DT>,
+    key: string,
+  ): Promise<void> => {
     const { data, rules, dirt, rawData, entries } = entryData;
     const { lazy, firstError, touchOnTest } = option.value;
 
@@ -163,14 +203,14 @@ const useValidate = (
 
     const unWatchPending = watch(
       () => entries[key].$pending,
-      value => {
+      (value: unknown) => {
         if (!value) cancel = true;
       },
     );
 
     const $errors: Array<Error> = [];
     const $messages: Array<string> = [];
-    let ruleItem = rules[key] as Rule | Array<Rule>;
+    let ruleItem = rules[key] as Rule<DT> | Array<Rule<DT>>;
 
     if (!ruleItem) return;
 
@@ -224,7 +264,7 @@ const useValidate = (
     }
   };
 
-  const reset = (entryData: ArgsObject, key: string): void => {
+  const reset = (entryData: ArgsObject<DT>, key: string): void => {
     const { dirt, entries } = entryData;
 
     setReactiveValue(dirt, key, false);
@@ -234,7 +274,7 @@ const useValidate = (
     } as Entry);
   };
 
-  const touch = (entryData: ArgsObject, key: string): void => {
+  const touch = (entryData: ArgsObject<DT>, key: string): void => {
     const { dirt } = entryData;
 
     setReactiveValue(dirt, key, true);
@@ -242,17 +282,17 @@ const useValidate = (
 
   const initialize = (): void => {
     setDefaultValue(
-      () => unwrap(_data) as GetDataFn,
-      unwrap(_rules) as Rules,
-      dirt,
+      () => unwrap(_data),
+      unwrap(_rules),
+      unwrap(dirt),
       rawData,
-      entries,
+      unwrap(entries),
     );
   };
 
   initialize();
 
-  watch(_rules, initialize);
+  watch(() => unwrap(_rules), initialize);
 
   watch(_option, initialize);
 

@@ -1,12 +1,13 @@
+import type { ComputedRef, Ref, UnwrapNestedRefs, UnwrapRef } from 'vue-demi';
 import { Vue2, isRef, isVue2, reactive } from 'vue-demi';
-import type { UnknownObject } from './types';
+import type { UnknownObject, ValidationResult } from './types';
 
 /* Coverage ignored since it only works with matched Vue version */
 
 /* c8 ignore start */
 export const setReactiveValue = (obj: any, key: string, value: any) => {
   if (isVue2) {
-    Vue2.set(obj, key, value);
+    Vue2?.set(obj, key, value);
   } else {
     obj[key] = value;
   }
@@ -19,12 +20,13 @@ export const hasOwn = (obj: UnknownObject, key: string): boolean =>
 export const isObject = (obj: UnknownObject): boolean =>
   Object.prototype.toString.call(obj) === '[object Object]';
 
-export const unwrap = (obj: UnknownObject): UnknownObject =>
-  (isRef(obj) ? obj.value : obj) as UnknownObject;
+export const unwrap = <DT extends UnknownObject>(
+  obj: UnwrapRef<DT> | Ref<DT> | ComputedRef<DT> | UnwrapNestedRefs<DT>,
+): DT => (isRef(obj) ? obj.value : obj) as DT;
 
 export const NOOP = () => {};
 
-export const ENTRY_PARAM = {
+export const ENTRY_PARAM: Partial<ValidationResult> = {
   $invalid: false,
   $errors: [],
   $messages: [],

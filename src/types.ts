@@ -4,7 +4,9 @@ export type UnknownObject = Record<string, any>;
 
 export type Fns = Record<string, Array<Function>>;
 
-export interface Option {
+export type Data = UnknownObject;
+
+export interface Option<DT extends Data, VT = any> {
   autoTouch?: boolean;
   autoTest?: boolean;
   lazy?: boolean;
@@ -12,41 +14,44 @@ export interface Option {
   touchOnTest?: boolean;
   transform?:
     | ((
-        value: any,
-        data?: Data,
-        rules?: Rules,
-        option?: Option,
-      ) => Result | any)
+        value: VT,
+        data?: DT,
+        rules?: Rules<DT>,
+        option?: Option<DT, VT>,
+      ) => Result<DT> | any)
     | ((
-        value: any,
-        data?: Data,
-        rules?: Rules,
-        option?: Option,
-      ) => Promise<Result | any>);
+        value: VT,
+        data?: DT,
+        rules?: Rules<DT>,
+        option?: Option<DT, VT>,
+      ) => Promise<Result<DT> | any>);
 }
 
-export type Data = UnknownObject;
-
-export interface Rule {
+export interface Rule<DT extends Data, VT = any> {
   test:
-    | ((value: any, data?: Data, rules?: Rules, option?: Option) => boolean)
     | ((
-        value: any,
-        data?: Data,
-        rules?: Rules,
-        option?: Option,
+        value: VT,
+        data?: DT,
+        rules?: Rules<DT>,
+        option?: Option<DT, VT>,
+      ) => boolean)
+    | ((
+        value: VT,
+        data?: DT,
+        rules?: Rules<DT>,
+        option?: Option<DT, VT>,
       ) => Promise<boolean>);
-  message?: string | ((value: any) => string);
+  message?: string | ((value: VT) => string);
   name: string;
 }
 
-export interface Rules {
-  [key: string]: Array<Rule> | Rule | Rules;
-}
+export type Rules<DT extends Data> = {
+  [K in keyof DT]: Array<Rule<DT>> | Rule<DT> | Rules<DT>;
+};
 
-export interface Dirt {
-  [key: string]: boolean | Dirt;
-}
+export type Dirt<DT extends Data> = {
+  [K in keyof DT]: boolean | Dirt<DT>;
+};
 
 export type FnsMapItem = Record<string, Array<Function>>;
 
@@ -68,35 +73,48 @@ export interface Entry {
   $uw?: () => void;
 }
 
-export interface Entries {
-  [key: string]: Entry | Entries;
-}
+export type Entries<DT> = {
+  [K in keyof DT]: Entry | Entries<DT>;
+};
 
-export type GetDataFn = () => Data;
+export type GetDataFn<DT> = () => DT;
 
-export type Args = [GetDataFn, Rules, Dirt, UnknownObject, Entries];
+export type Args<DT extends Data> = [
+  GetDataFn<DT>,
+  Rules<DT>,
+  Dirt<DT>,
+  UnknownObject,
+  Entries<DT>,
+];
 
-export interface ArgsObject {
-  data: GetDataFn;
-  rules: Rules;
-  dirt: Dirt;
+export interface ArgsObject<DT extends Data> {
+  data: GetDataFn<DT>;
+  rules: Rules<DT>;
+  dirt: Dirt<DT>;
   rawData: UnknownObject;
-  entries: Entries;
+  entries: Entries<DT>;
 }
 
-export interface Result {
+export interface ValidationResult {
   $invalid: boolean;
   $errors: Array<Error>;
   $messages: Array<string>;
-  $test: (() => void) | (() => Promise<void>);
-  $reset: () => void;
-  $touch: () => void;
   $dirty: boolean;
-
-  // currently there's no good implementation to well support circular reference, so left it any
-  [key: string]: any;
+  $pending: boolean;
 }
 
-export interface UseValidate {
-  result: ComputedRef<Result | any>;
+export interface ResultFunctions {
+  $test(): void | Promise<void>;
+  $reset(): void;
+  $touch(): void;
+}
+
+export type Result<DT extends Data> = ValidationResult &
+  ResultFunctions &
+  Partial<{
+    [K in keyof DT]: Result<DT>;
+  }>;
+
+export interface UseValidate<T extends Data> {
+  result: ComputedRef<Result<T>>;
 }
